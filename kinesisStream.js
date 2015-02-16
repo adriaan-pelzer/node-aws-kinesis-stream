@@ -48,9 +48,9 @@ var getNextIteration = function ( kinesis, nextShardIterator, timeout ) {
     } );
 };
 
-module.exports = R.curry ( function ( region, streamName ) {
+module.exports = R.curry ( function ( region, streamName, ShardIteratorType ) {
     var kinesis = new aws.Kinesis ( { region: region } );
-    var kinesisConfig = R.mixin ( R.createMapEntry ( 'StreamName', streamName ), R.createMapEntry ( 'ShardIteratorType', 'LATEST' ) );
+    var kinesisConfig = R.mixin ( R.createMapEntry ( 'StreamName', streamName ), R.createMapEntry ( 'ShardIteratorType', ShardIteratorType ) );
 
     return hl ( wrapKinesisFunction ( kinesis, 'describeStream', R.omit ( [ 'ShardIteratorType' ], kinesisConfig ) ) )
         .pluck ( 'StreamDescription' )
