@@ -41,7 +41,9 @@ var getNextIteration = function ( kinesis, nextShardIterator, timeout ) {
                     }, timeout );
                 } else {
                     pushFuncs.successList ( result.Records );
-                    next ( getNextIteration ( kinesis, result.NextShardIterator, 0 ) );
+                    setTimeout ( function () {
+                        next ( getNextIteration ( kinesis, result.NextShardIterator, 100 ) );
+                    }, 100 );
                 }
             }
         }, push ) );
