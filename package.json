@@ -1,6 +1,6 @@
 {
   "name": "node-aws-kinesis-stream",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "description": "Shard-agnostic highland stream from a Kinesis stream",
   "main": "kinesisStream.js",
   "scripts": {
