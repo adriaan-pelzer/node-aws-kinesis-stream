@@ -17,7 +17,7 @@ var processResult = function ( process, push ) {
                 pushFuncs.error ( error );
             }
 
-            process ( pushFuncs, { Records: [] } );
+            process ( pushFuncs, R.merge ( result, { Records: [] } ) );
         } else {
             process ( pushFuncs, result );
         }
