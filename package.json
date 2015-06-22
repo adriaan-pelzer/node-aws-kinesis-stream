@@ -21,8 +21,8 @@
     "url": "https://github.com/adriaan-pelzer/node-aws-kinesis-stream/issues"
   },
   "dependencies": {
-    "aws-sdk": "~2.1.9",
-    "highland": "~2.3.0",
-    "ramda": "~0.9.1"
+    "aws-sdk": "^2.1.35",
+    "highland": "^2.5.1",
+    "ramda": "^0.15.1"
   }
 }

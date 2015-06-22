@@ -2,74 +2,89 @@ var aws = require ( 'aws-sdk' );
 var R = require ( 'ramda' );
 var hl = require ( 'highland' );
 
-var timeouts = [ 200, 2000 ];
+var timeouts = [ 0, 2000 ];
+var debug = false;
 
-var processResult = function ( process, push ) {
-    var pushFuncs = {
-        error: push,
-        success: R.lPartial ( push, null ),
-        successList: R.forEach ( R.lPartial ( push, null ) )
-    };
+var log = function ( message ) {
+    var inspect;
 
-    return function ( error, result ) {
-        if ( error ) {
-            if ( error.code !== 'ProvisionedThroughputExceededException' ) {
-                pushFuncs.error ( error );
-            }
+    if ( debug ) {
+        inspect = require ( 'eyes' ).inspector ( { maxLength: 0 } );
 
-            process ( pushFuncs, R.merge ( result, { Records: [] } ) );
-        } else {
-            process ( pushFuncs, result );
-        }
-    };
+        ( {
+            'Array': inspect,
+            'Object': inspect
+        }[ R.type ( message ) ] || console.log )( message );
+    }
 };
 
-var wrapKinesisFunction = function ( kinesis, func, parms ) {
-    return function ( push, next ) {
-        kinesis[func] ( parms, processResult ( function ( pushFuncs, result ) {
-            pushFuncs.success ( result );
-            pushFuncs.success ( hl.nil );
-        }, push ) );
-    };
-};
+var wrapKinesisFunction = R.curry ( function ( kinesis, func, parms ) {
+    log ( 'wrapKinesisFunction' );
+
+    return hl.wrapCallback ( function ( parms, callBack ) {
+        kinesis[func] ( parms, callBack );
+    } )( parms );
+} );
 
 var getNextIteration = function ( kinesis, nextShardIterator, timeout ) {
-    return hl ( function ( push, next ) {
-        kinesis.getRecords ( { ShardIterator: nextShardIterator, Limit: 10000 }, processResult ( function ( pushFuncs, result ) {
-            if ( R.type ( result.Records ) !== 'Array' ) {
-                pushFuncs.error ( 'Results is not an array' );
-            } else {
+    log ( 'getNextIteration' );
+    log ( 'timeout: ' + timeout );
+
+    return wrapKinesisFunction ( kinesis, 'getRecords', { ShardIterator: nextShardIterator, Limit: 10000 } )
+        .errors ( function ( error, push ) {
+            log ( 'error' );
+
+            if ( error.code !== 'ProvisionedThroughputExceededException' ) {
+                log ( 'It\'s a real error' );
+                return push ( error );
+            }
+
+            log ( 'It\'s a throughput error' );
+
+            return push ( null, { NextShardIterator: nextShardIterator, Records: [] } );
+        } )
+        .flatMap ( function ( result ) {
+            log ( 'MillisBehindLatest: ' + result.MillisBehindLatest );
+
+            return hl ( function ( push, next ) {
                 if ( R.isEmpty ( result.Records ) ) {
-                    setTimeout ( function () {
+                    log ( 'No Records' );
+                    return setTimeout ( function () {
                         next ( getNextIteration ( kinesis, result.NextShardIterator, R.min ( [ timeout + R.min ( timeouts ), R.max ( timeouts ) ] ) ) );
                     }, timeout );
-                } else {
-                    pushFuncs.successList ( result.Records );
-                    setTimeout ( function () {
-                        next ( getNextIteration ( kinesis, result.NextShardIterator, R.min ( timeouts ) ) );
-                    }, R.min ( timeouts ) );
                 }
-            }
-        }, push ) );
-    } );
+
+                log ( 'Has Records' );
+                log ( 'Number of Records: ' + R.length ( result.Records ) );
+
+                R.forEach ( R.curry ( push )( null, R.__ ), result.Records );
+
+                setTimeout ( function () {
+                    next ( getNextIteration ( kinesis, result.NextShardIterator, R.max ( [ timeout - R.min ( timeouts ), R.min ( timeouts ) ] ) ) );
+                }, R.min ( timeouts ) );
+            } );
+        } );
 };
 
-module.exports = R.curry ( function ( awsConfig, streamName, ShardIteratorType ) {
-    var kinesis = new aws.Kinesis ( ( R.type ( awsConfig ) === 'string' ) ? { region: awsConfig } : awsConfig );
-    var kinesisConfig = R.mixin ( R.createMapEntry ( 'StreamName', streamName ), R.createMapEntry ( 'ShardIteratorType', ShardIteratorType ) );
+module.exports = R.curry ( function ( awsConfig ) {
+    var kinesis = new aws.Kinesis ( R.pick ( [ 'accessKeyId', 'secretAccessKey', 'region' ], awsConfig ) );
+    var kinesisConfig = R.pick ( [ 'StreamName', 'ShardIteratorType' ], awsConfig );
+    
+    debug = awsConfig.debug || false;
 
-    return hl ( wrapKinesisFunction ( kinesis, 'describeStream', R.omit ( [ 'ShardIteratorType' ], kinesisConfig ) ) )
+    return wrapKinesisFunction ( kinesis, 'describeStream', R.omit ( [ 'ShardIteratorType' ], kinesisConfig ) )
         .pluck ( 'StreamDescription' )
         .pluck ( 'Shards' )
         .map ( R.pluck ( 'ShardId' ) )
         .flatMap ( function ( shardIdArray ) {
             return hl ( shardIdArray )
                 .map ( R.createMapEntry ( 'ShardId' ) )
-                .map ( R.mixin ( kinesisConfig ) )
+                .map ( R.merge ( kinesisConfig ) )
                 .map ( function ( shardConfig ) {
-                    return hl ( wrapKinesisFunction ( kinesis, 'getShardIterator', shardConfig ) ).flatMap ( function ( result ) {
-                        return getNextIteration ( kinesis, result.ShardIterator, R.min ( timeouts ) );
-                    } );
+                    return wrapKinesisFunction ( kinesis, 'getShardIterator', shardConfig )
+                        .flatMap ( function ( result ) {
+                            return getNextIteration ( kinesis, result.ShardIterator, R.min ( timeouts ) );
+                        } );
                 } )
                 .parallel ( R.length ( shardIdArray ) );
         } )
